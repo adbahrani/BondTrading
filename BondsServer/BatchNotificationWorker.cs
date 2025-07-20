@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Net.WebSockets;
 
 namespace BondsServer
 {
@@ -20,10 +21,12 @@ namespace BondsServer
 
         public void Run()
         {
+            Console.WriteLine("🚀 BatchNotificationWorker started");
             StringBuilder sb = new StringBuilder();
             List<string> currentBatch = new List<string>(batchSize);
             Dictionary<string, int> bondIndicesById = new();
             int numUpdatesProcessed = 0;
+            int totalBatchesSent = 0;
 
             foreach (BondUpdate update in inputQueue.GetConsumingEnumerable())
             {
@@ -43,6 +46,12 @@ namespace BondsServer
 
                 ++numUpdatesProcessed;
 
+                // Debug: Log every 5000 updates received (instead of 1000)
+                if (numUpdatesProcessed % 5000 == 0)
+                {
+                    Console.WriteLine($"📥 BatchWorker received {numUpdatesProcessed} updates, current batch size: {currentBatch.Count}");
+                }
+
                 if (numUpdatesProcessed == batchSize)
                 {
                     // Format the entire batch into a string, ready for sending
@@ -53,8 +62,25 @@ namespace BondsServer
                     }
                     string message = sb.ToString();
 
-                    // Send the message
-                    broadcastToClients(message);
+                    totalBatchesSent++;
+                    
+                    // Only log every 100th batch (instead of every batch)
+                    if (totalBatchesSent % 100 == 0)
+                    {
+                        Console.WriteLine($"📤 Sent 100 batches (last: #{totalBatchesSent} with {currentBatch.Count} bonds, {message.Length} bytes)");
+                    }
+
+                    // Send the message - with error handling
+                    try
+                    {
+                        broadcastToClients(message);
+                        // Remove the success log - too spammy
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"❌ Error broadcasting batch #{totalBatchesSent}: {ex.Message}");
+                        // Continue processing even if broadcast fails
+                    }
 
                     // Reset for the next batch
                     sb.Clear();
@@ -63,6 +89,8 @@ namespace BondsServer
                     numUpdatesProcessed = 0;
                 }
             }
+            
+            Console.WriteLine("⚠️ BatchNotificationWorker ended - inputQueue completed");
         }
     }
 }

@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8" />
     <title>Bond Trading Platform</title>
-    <!-- Load our script first, then Alpine.js -->
     <script>
         function bondDashboard() {
             return {
@@ -13,6 +12,13 @@
                 connected: false,
                 loading: false,
                 updateCount: 0,
+                updateRate: 0,
+                lastUpdateCount: 0,
+                lastRateTime: Date.now(),
+                
+                // WebSocket management
+                ws: null,
+                messageCount: 0,
                 
                 // Pagination
                 currentPage: 1,
@@ -34,12 +40,9 @@
                 sortBy: '',
                 sortDir: 'asc',
                 
-                // Price tracking for change calculation
+                // Price tracking
                 previousPrices: {},
-                
-                // Simple update tracking
                 updateCounts: {},
-                startTime: null,
 
                 init() {
                     this.loadSummary();
@@ -59,12 +62,11 @@
                 async loadBonds() {
                     this.loading = true;
                     try {
-                        // Combine search and bondType filters
                         let searchTerm = this.filters.search;
                         if (this.filters.bondType && !searchTerm) {
                             searchTerm = this.filters.bondType;
                         } else if (this.filters.bondType && searchTerm) {
-                            searchTerm = this.filters.bondType; // Bond type takes priority
+                            searchTerm = this.filters.bondType;
                         }
 
                         const params = new URLSearchParams({
@@ -100,101 +102,112 @@
                 },
 
                 connectWebSocket() {
-                    console.log('Attempting to connect to WebSocket...');
-                    const ws = new WebSocket('ws://localhost:5130/ws');
+                    console.log('Connecting to WebSocket...');
+                    this.ws = new WebSocket('ws://localhost:5130/ws');
                     
-                    ws.onopen = () => {
+                    this.ws.onopen = () => {
                         this.connected = true;
                         console.log('✅ Connected to bond stream');
                     };
                     
-                    ws.onmessage = (event) => {
+                    this.ws.onmessage = (event) => {
+                        if (event.data === 'CONNECTED\n') {
+                            console.log('📡 Connection confirmed');
+                            return;
+                        }
+                        
                         const lines = event.data.trim().split('\n');
-                        console.log(`📨 Got batch ${lines.length} updates...`);
+                        if (lines.length === 0) return;
+                        
+                        // Debug: Log every 20th batch
+                        this.messageCount++;
+                        if (this.messageCount % 20 === 0) {
+                            console.log(`📨 Batch #${this.messageCount}: ${lines.length} updates, total: ${this.updateCount}`);
+                        }
                         
                         let successCount = 0;
                         for (const line of lines) {
+                            if (!line) continue;
                             try {
                                 const bondUpdate = JSON.parse(line);
                                 this.updateBond(bondUpdate);
                                 this.updateCount++;
                                 successCount++;
                             } catch (e) {
-                                console.warn('❌ Failed to parse line:', line.substring(0, 100) + '...');
+                                console.warn('Parse error:', line.substring(0, 50) + '...');
                             }
                         }
-                        console.log(`✅ Successfully processed ${successCount}/${lines.length} updates`);
+                        
+                        // Calculate update rate based on total updates over time
+                        const now = Date.now();
+                        if (now - this.lastRateTime > 3000) { // Every 3 seconds
+                            const timeDiff = (now - this.lastRateTime) / 1000;
+                            const updateDiff = this.updateCount - this.lastUpdateCount;
+                            this.updateRate = Math.round(updateDiff / timeDiff);
+                            this.lastUpdateCount = this.updateCount;
+                            this.lastRateTime = now;
+                        }
                     };
                     
-                    ws.onerror = (error) => {
+                    this.ws.onerror = (error) => {
                         console.error('❌ WebSocket error:', error);
                     };
                     
-                    ws.onclose = (event) => {
+                    this.ws.onclose = (event) => {
                         this.connected = false;
-                        console.log(`❌ Disconnected from bond stream. Code: ${event.code}, Reason: ${event.reason}`);
-                        // Auto-reconnect after 3 seconds
+                        console.log(`❌ Disconnected. Code: ${event.code}`);
+                        // Simple reconnect after 3 seconds
                         setTimeout(() => this.connectWebSocket(), 3000);
                     };
                 },
 
                 updateBond(bondUpdate) {
-                    // Find bond in current page and update it
-                    const index = this.bonds.findIndex(b => b.Bond.Id === bondUpdate.Bond.Id);
                     const bondId = bondUpdate.Bond.Id;
-                    
-                    // Simple update tracking
                     this.updateCounts[bondId] = (this.updateCounts[bondId] || 0) + 1;
                     
+                    // Only update bonds that are currently visible on the page
+                    const index = this.bonds.findIndex(b => b.Bond.Id === bondId);
                     if (index !== -1) {
-                        // Store previous price before updating
                         this.previousPrices[bondId] = this.bonds[index].Bond.Price;
-                        
-                        // Mark as recently updated with simple count
-                        bondUpdate._recentlyUpdated = true;
                         bondUpdate._updateCount = this.updateCounts[bondId];
                         
+                        // Add flash class for quick animation
+                        bondUpdate._flashUpdate = true;
                         this.bonds[index] = bondUpdate;
                         
-                        // Remove the update indicator after 2 seconds
+                        // Remove flash class after animation completes
                         setTimeout(() => {
-                            if (this.bonds[index] && this.bonds[index].Bond.Id === bondId) {
-                                this.bonds[index]._recentlyUpdated = false;
+                            const currentIndex = this.bonds.findIndex(b => b.Bond.Id === bondId);
+                            if (currentIndex !== -1) {
+                                this.bonds[currentIndex]._flashUpdate = false;
                             }
-                        }, 2000);
+                        }, 500);
                     }
                 },
 
-                // Simple update count display
                 getUpdateFrequencyText(bond) {
                     const count = bond._updateCount || 0;
                     if (count === 0) return '';
-                    if (count === 1) return '1 update';
-                    return `${count} updates`;
+                    if (count > 50) return `🔥 ${count}`;
+                    if (count > 20) return `⚡ ${count}`;
+                    return count.toString();
                 },
 
-                // Simple filtering
                 applyFilters() {
                     this.currentPage = 1;
                     this.loadBonds();
                 },
 
                 clearFilters() {
-                    this.filters = {
-                        search: '',
-                        bondType: '',
-                        minPrice: '',
-                        maxPrice: '',
-                        minYield: '',
-                        maxYield: ''
-                    };
+                    this.filters = { search: '', bondType: '', minPrice: '', maxPrice: '', minYield: '', maxYield: '' };
                     this.currentPage = 1;
                     this.loadBonds();
                 },
 
                 sort(column) {
-                    if (column === 'priceChange') {
-                        // Handle client-side price change sorting
+                    console.log('Sorting by:', column); // Debug line
+                    if (column === 'priceChange' || column === 'activity') {
+                        // Handle client-side sorting for browser-only data
                         this.sortClientSide(column);
                     } else {
                         // Handle server-side sorting for other columns
@@ -217,15 +230,22 @@
                         this.sortDir = 'asc';
                     }
                     
-                    // Sort current bonds array by price change
+                    // Sort current bonds array 
                     this.bonds.sort((a, b) => {
-                        const changeA = this.getPriceChange(a);
-                        const changeB = this.getPriceChange(b);
+                        let valueA, valueB;
+                        
+                        if (column === 'priceChange') {
+                            valueA = this.getPriceChange(a);
+                            valueB = this.getPriceChange(b);
+                        } else if (column === 'activity') {
+                            valueA = a._updateCount || 0;
+                            valueB = b._updateCount || 0;
+                        }
                         
                         if (this.sortDir === 'asc') {
-                            return changeA - changeB;
+                            return valueA - valueB;
                         } else {
-                            return changeB - changeA;
+                            return valueB - valueA;
                         }
                     });
                 },
@@ -235,7 +255,6 @@
                     return this.sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc';
                 },
 
-                // Pagination
                 nextPage() {
                     if (this.currentPage < this.totalPages) {
                         this.currentPage++;
@@ -250,7 +269,6 @@
                     }
                 },
 
-                // Price change calculation
                 getPriceChangeClass(bond) {
                     const change = this.getPriceChange(bond);
                     if (change > 0) return 'price-positive';
@@ -382,12 +400,19 @@
         .status-disconnected { background: #ef4444; }
         .recently-updated { 
             background-color: #fef3c7 !important; 
-            transition: background-color 2s ease-out;
+            transition: background-color 0.3s ease-out;
+        }
+        .update-flash {
+            animation: flashUpdate 0.5s ease-out;
+        }
+        @keyframes flashUpdate {
+            0% { background-color: #fef3c7; }
+            100% { background-color: transparent; }
         }
         .pagination { 
             padding: 1rem; 
             display: flex; 
-            justify-content: between; 
+            justify-content: space-between; 
             align-items: center;
             border-top: 1px solid #e2e8f0;
         }
@@ -407,6 +432,9 @@
                     </div>
                     <div style="font-size: 0.875rem; color: #64748b;">
                         Updates: <span x-text="updateCount.toLocaleString()"></span>
+                        <span x-show="updateRate > 0" style="margin-left: 1rem;">
+                            Rate: <span x-text="updateRate.toLocaleString()"></span>/sec
+                        </span>
                     </div>
                 </div>
             </div>
@@ -444,38 +472,26 @@
             <div class="filter-grid">
                 <div class="form-group">
                     <label class="form-label">Search Bond ID</label>
-                    <input class="form-input" type="text" x-model="filters.search" placeholder="e.g., AAPL, UST, CORP_BB">
+                    <input class="form-input" type="text" x-model="filters.search" placeholder="e.g., AAPL, UST, BB-">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Bond Type</label>
                     <select class="form-input" x-model="filters.bondType">
                         <option value="">All Types</option>
-                        <option value="UST-">US Treasury (Low Vol)</option>
-                        <option value="AAA-">AAA Corporate (Low Vol)</option>
-                        <option value="AA-">AA Corporate (Low Vol)</option>
-                        <option value="A-">A Corporate (Medium Vol)</option>
-                        <option value="BBB-">BBB Corporate (High Vol)</option>
-                        <option value="BB-">BB Junk Bonds (Very High Vol)</option>
-                        <option value="AAPL-">Apple Bonds</option>
-                        <option value="MSFT-">Microsoft Bonds</option>
-                        <option value="GOOGL-">Google Bonds</option>
+                        <option value="BB-">BB Junk Bonds (High Frequency)</option>
+                        <option value="UST-">US Treasury</option>
+                        <option value="AAPL-">Apple</option>
+                        <option value="MSFT-">Microsoft</option>
+                        <option value="GOOGL-">Google</option>
                     </select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Min Price</label>
-                    <input class="form-input" type="number" x-model="filters.minPrice" placeholder="e.g., 900">
+                    <input class="form-input" type="number" x-model="filters.minPrice" placeholder="900">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Max Price</label>
-                    <input class="form-input" type="number" x-model="filters.maxPrice" placeholder="e.g., 1100">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Min Yield %</label>
-                    <input class="form-input" type="number" step="0.001" x-model="filters.minYield" placeholder="e.g., 0.05">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Max Yield %</label>
-                    <input class="form-input" type="number" step="0.001" x-model="filters.maxYield" placeholder="e.g., 0.15">
+                    <input class="form-input" type="number" x-model="filters.maxPrice" placeholder="1100">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Page Size</label>
@@ -501,22 +517,18 @@
                         <tr>
                             <th class="sortable" @click="sort('id')" :class="getSortClass('id')">Bond ID</th>
                             <th class="sortable" @click="sort('price')" :class="getSortClass('price')">Price</th>
-                            <th class="sortable" @click="sort('yield')" :class="getSortClass('yield')">Current Yield</th>
-                            <th class="sortable" @click="sort('ytm')" :class="getSortClass('ytm')">YTM</th>
-                            <th class="sortable" @click="sort('duration')" :class="getSortClass('duration')">Mod Duration</th>
+                            <th class="sortable" @click="sort('yield')" :class="getSortClass('yield')">Yield</th>
                             <th class="sortable" @click="sort('coupon')" :class="getSortClass('coupon')">Coupon</th>
                             <th class="sortable" @click="sort('priceChange')" :class="getSortClass('priceChange')">Price Change</th>
-                            <th>Activity</th>
+                            <th class="sortable" @click="sort('activity')" :class="getSortClass('activity')">Activity</th>
                         </tr>
                     </thead>
                     <tbody>
                         <template x-for="bond in bonds" :key="bond.Bond.Id">
-                            <tr :class="bond._recentlyUpdated ? 'recently-updated' : ''">
+                            <tr :class="bond._flashUpdate ? 'update-flash' : ''">
                                 <td x-text="bond.Bond.Id" style="font-family: monospace; font-weight: 500;"></td>
                                 <td x-text="'$' + bond.Bond.Price.toLocaleString()"></td>
                                 <td x-text="(bond.Yield * 100).toFixed(3) + '%'"></td>
-                                <td x-text="bond.YieldToMaturity ? (bond.YieldToMaturity * 100).toFixed(3) + '%' : 'N/A'"></td>
-                                <td x-text="bond.ModifiedDuration ? bond.ModifiedDuration.toFixed(2) : 'N/A'"></td>
                                 <td x-text="bond.Bond.Coupon + '%'"></td>
                                 <td>
                                     <span :class="getPriceChangeClass(bond)" x-text="getPriceChangeText(bond)"></span>
@@ -532,21 +544,15 @@
             
             <div class="pagination" x-show="totalPages > 1">
                 <div style="font-size: 0.875rem; color: #64748b;">
-                    Showing <span x-text="((currentPage - 1) * pageSize) + 1"></span> to 
-                    <span x-text="Math.min(currentPage * pageSize, filteredCount)"></span> of 
-                    <span x-text="filteredCount.toLocaleString()"></span> results
+                    Page <span x-text="currentPage"></span> of <span x-text="totalPages"></span>
+                    (<span x-text="filteredCount.toLocaleString()"></span> total)
                 </div>
-                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <div style="display: flex; gap: 0.5rem;">
                     <button class="btn btn-secondary" @click="prevPage()" :disabled="currentPage === 1">← Prev</button>
-                    <span style="font-size: 0.875rem; padding: 0 1rem;">
-                        Page <span x-text="currentPage"></span> of <span x-text="totalPages"></span>
-                    </span>
                     <button class="btn btn-secondary" @click="nextPage()" :disabled="currentPage === totalPages">Next →</button>
                 </div>
             </div>
         </div>
     </div>
-
-
 </body>
 </html>

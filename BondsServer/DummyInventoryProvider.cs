@@ -6,23 +6,6 @@ namespace BondsServer
     {
         int numBonds;
         BlockingCollection<Bond> outputQueue;
-        private static readonly string[] Issuers = {
-            "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "JPM", "JNJ", "V",
-            "WMT", "UNH", "PG", "HD", "DIS", "MA", "BAC", "ADBE", "CRM", "NFLX",
-            "PYPL", "INTC", "CMCSA", "PEP", "ABT", "TMO", "COST", "AVGO", "ACN", "MRK",
-            "US_TREASURY", "CORP_AAA", "CORP_AA", "CORP_A", "CORP_BBB", "CORP_BB",
-            "MUNI_NY", "MUNI_CA", "MUNI_TX", "MUNI_FL"
-        };
-        
-        private static readonly Dictionary<string, (int minCoupon, int maxCoupon, int minDuration, int maxDuration)> IssuerProfiles = new()
-        {
-            ["US_TREASURY"] = (1, 4, 30, 10950), // 30 days to 30 years
-            ["CORP_AAA"] = (2, 6, 365, 3650), // 1 to 10 years
-            ["CORP_AA"] = (3, 7, 365, 3650),
-            ["CORP_A"] = (4, 8, 365, 2920), // 1 to 8 years
-            ["CORP_BBB"] = (5, 10, 365, 2555), // 1 to 7 years
-            ["CORP_BB"] = (7, 12, 365, 1825), // 1 to 5 years
-        };
 
         public DummyInventoryProvider(int numBonds, BlockingCollection<Bond> outputQueue)
         {
@@ -32,8 +15,8 @@ namespace BondsServer
 
         public void Run()
         {
-            // Generate realistic bonds
-            List<Bond> bonds = GenerateRealisticBonds();
+            // Generate simple bonds
+            List<Bond> bonds = GenerateBonds();
 
             // Output initial bond prices
             foreach (Bond bond in bonds)
@@ -41,129 +24,135 @@ namespace BondsServer
                 outputQueue.Add(bond);
             }
 
+            Console.WriteLine($"Generated {bonds.Count} bonds");
+            Console.WriteLine($"BB Junk Bonds: {bonds.Count(b => b.id.StartsWith("BB-"))}");
+
+            // IMPORTANT: Let the system stabilize before starting updates
+            Console.WriteLine("Waiting 3 seconds for system to stabilize...");
+            Thread.Sleep(3000);
+
             int totalUpdates = 0;
             long startTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
+            // Update loop - steady 1k/sec rate
             while (true)
             {
-                for (int i = 0; i < 30; ++i)
+                for (int i = 0; i < 10; ++i) // 10 updates per cycle
                 {
-                    int idx = Random.Shared.Next() % numBonds;
-                    
-                    // More realistic price movements based on bond type
-                    var priceChange = CalculateRealisticPriceChange(bonds[idx]);
+                    int idx;
+
+                    // 50% chance to pick a BB bond if available
+                    if (Random.Shared.NextDouble() < 0.5)
+                    {
+                        // Try to find a BB bond
+                        for (int attempt = 0; attempt < 10; attempt++)
+                        {
+                            int testIdx = Random.Shared.Next() % numBonds;
+                            if (bonds[testIdx].id.StartsWith("BB-"))
+                            {
+                                idx = testIdx;
+                                goto UpdateBond;
+                            }
+                        }
+                    }
+
+                    // Default: random selection
+                    idx = Random.Shared.Next() % numBonds;
+
+                    UpdateBond:
+                    // Simple price change based on bond type
+                    var priceChange = GetPriceChange(bonds[idx]);
                     bonds[idx].price += priceChange;
-                    
-                    // Keep prices within reasonable bounds
                     bonds[idx].price = Math.Max(500, Math.Min(1500, bonds[idx].price));
-                    
+
                     outputQueue.Add(bonds[idx]);
 
                     ++totalUpdates;
-                    if (totalUpdates % 5000 == 0)
+                    if (totalUpdates % 10000 == 0)
                     {
                         float rate = 1000f * totalUpdates / (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - startTime);
                         Console.WriteLine($"Update rate: {rate:F1}/sec");
                     }
                 }
-                Thread.Sleep(5);
+                Thread.Sleep(5); // 10 updates every 5ms = 2,000/sec
             }
         }
 
-        private List<Bond> GenerateRealisticBonds()
+        private List<Bond> GenerateBonds()
         {
             var bonds = new List<Bond>(numBonds);
             var random = new Random();
+            
+            // Keep track of counters for clean ID generation
+            int bbCounter = 0;
+            int ustCounter = 0;
+            int aaplCounter = 0;
+            int msftCounter = 0;
+            int googlCounter = 0;
 
             for (int i = 0; i < numBonds; i++)
             {
-                var issuer = Issuers[random.Next(Issuers.Length)];
-                var bondType = DetermineBondType(issuer);
-                var profile = GetIssuerProfile(bondType);
-                
-                var coupon = random.Next(profile.minCoupon, profile.maxCoupon + 1);
-                var duration = random.Next(profile.minDuration, profile.maxDuration + 1);
-                
-                // Price starts near par (1000) but varies based on coupon and market conditions
-                var basePrice = 1000;
-                var couponAdjustment = (coupon - 5) * 10; // Higher coupon = higher price
-                var priceNoise = random.Next(-50, 51); // Random market movement
-                var initialPrice = basePrice + couponAdjustment + priceNoise;
-                
+                string bondId;
+                int coupon;
+                int duration;
+
+                if (i < numBonds * 0.01) // First 1% are BB junk bonds (5k bonds)
+                {
+                    bondId = $"BB-{bbCounter++:D6}";
+                    coupon = random.Next(8, 15); // High coupon for junk
+                    duration = random.Next(365, 1825); // 1-5 years
+                }
+                else if (i < numBonds * 0.21) // Next 20% are Treasury (100k bonds)
+                {
+                    bondId = $"UST-{ustCounter++:D6}";
+                    coupon = random.Next(2, 5); // Low coupon for Treasury
+                    duration = random.Next(365, 10950); // 1-30 years
+                }
+                else // Remaining 79% are corporate - only the 3 types we filter for
+                {
+                    var corpType = random.Next(3);
+                    switch (corpType)
+                    {
+                        case 0:
+                            bondId = $"AAPL-{aaplCounter++:D6}";
+                            break;
+                        case 1:
+                            bondId = $"MSFT-{msftCounter++:D6}";
+                            break;
+                        case 2:
+                            bondId = $"GOOGL-{googlCounter++:D6}";
+                            break;
+                        default:
+                            bondId = $"AAPL-{aaplCounter++:D6}";
+                            break;
+                    }
+                    coupon = random.Next(4, 8); // Medium coupon for corporate
+                    duration = random.Next(365, 3650); // 1-10 years
+                }
+
+                // Simple price calculation
+                var basePrice = 1000 + (coupon - 6) * 20 + random.Next(-100, 101);
+                var price = Math.Max(500, Math.Min(1500, basePrice));
+
                 bonds.Add(new Bond
                 {
-                    id = GenerateBondId(issuer, i),
+                    id = bondId,
                     coupon = coupon,
                     duration = duration,
-                    faceValue = 100, // Standard face value
-                    price = Math.Max(500, Math.Min(1500, initialPrice)), // Keep within bounds
+                    faceValue = 100,
+                    price = price
                 });
             }
 
             return bonds;
         }
 
-        private string DetermineBondType(string issuer)
+        private int GetPriceChange(Bond bond)
         {
-            if (issuer == "US_TREASURY") return "US_TREASURY";
-            if (issuer.StartsWith("CORP_")) return issuer;
-            if (issuer.StartsWith("MUNI_")) return "MUNI";
-            
-            // For corporate names, assign random credit rating
-            var ratings = new[] { "CORP_AAA", "CORP_AA", "CORP_A", "CORP_BBB", "CORP_BB" };
-            var weights = new[] { 0.05, 0.15, 0.25, 0.35, 0.20 }; // Realistic distribution
-            
-            var random = Random.Shared.NextDouble();
-            var cumulative = 0.0;
-            
-            for (int i = 0; i < ratings.Length; i++)
-            {
-                cumulative += weights[i];
-                if (random <= cumulative)
-                    return ratings[i];
-            }
-            
-            return "CORP_BBB"; // Default
-        }
-
-        private (int minCoupon, int maxCoupon, int minDuration, int maxDuration) GetIssuerProfile(string bondType)
-        {
-            if (IssuerProfiles.TryGetValue(bondType, out var profile))
-                return profile;
-                
-            // Default for municipal or unknown
-            return (3, 8, 365, 7300); // 1 to 20 years
-        }
-
-        private string GenerateBondId(string issuer, int index)
-        {
-            if (issuer == "US_TREASURY")
-                return $"UST-{index:D6}";
-            if (issuer.StartsWith("CORP_"))
-                return $"{issuer.Replace("CORP_", "")}-{index:D6}";
-            if (issuer.StartsWith("MUNI_"))
-                return $"{issuer}-{index:D6}";
-                
-            return $"{issuer}-{index:D6}";
-        }
-
-        private int CalculateRealisticPriceChange(Bond bond)
-        {
-            var issuerType = DetermineBondType(bond.id.Split('-')[0]);
-            
-            // Different volatility for different bond types
-            var volatility = issuerType switch
-            {
-                "US_TREASURY" => 5,   // Very low volatility
-                "CORP_AAA" => 8,      // Low volatility  
-                "CORP_AA" => 12,      // Low-medium volatility
-                "CORP_A" => 18,       // Medium volatility
-                "CORP_BBB" => 25,     // Medium-high volatility
-                "CORP_BB" => 35,      // High volatility
-                _ => 20               // Default medium volatility
-            };
-            
-            return Random.Shared.Next(-volatility, volatility + 1);
+            // Simple volatility based on bond type
+            if (bond.id.StartsWith("BB-")) return Random.Shared.Next(-50, 51); // High volatility junk
+            if (bond.id.StartsWith("UST-")) return Random.Shared.Next(-5, 6);   // Low volatility Treasury
+            return Random.Shared.Next(-15, 16); // Medium volatility corporate
         }
     }
 }
