@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Bond Trading Platform</title>
+    <!-- Load our script first, then Alpine.js -->
+    <script>
+        function bondDashboard() {
+            return {
+                // State
+                bonds: [],
+                summary: {},
+                connected: false,
+                loading: false,
+                updateCount: 0,
+                
+                // Pagination
+                currentPage: 1,
+                pageSize: 100,
+                totalPages: 1,
+                filteredCount: 0,
+                
+                // Filters
+                filters: {
+                    search: '',
+                    bondType: '',
+                    minPrice: '',
+                    maxPrice: '',
+                    minYield: '',
+                    maxYield: ''
+                },
+                
+                // Sorting
+                sortBy: '',
+                sortDir: 'asc',
+                
+                // Price tracking for change calculation
+                previousPrices: {},
+                
+                // Simple update tracking
+                updateCounts: {},
+                startTime: null,
+
+                init() {
+                    this.loadSummary();
+                    this.loadBonds();
+                    this.connectWebSocket();
+                },
+
+                async loadSummary() {
+                    try {
+                        const response = await fetch('http://localhost:5130/api/bonds/summary');
+                        this.summary = await response.json();
+                    } catch (error) {
+                        console.error('Failed to load summary:', error);
+                    }
+                },
+
+                async loadBonds() {
+                    this.loading = true;
+                    try {
+                        // Combine search and bondType filters
+                        let searchTerm = this.filters.search;
+                        if (this.filters.bondType && !searchTerm) {
+                            searchTerm = this.filters.bondType;
+                        } else if (this.filters.bondType && searchTerm) {
+                            searchTerm = this.filters.bondType; // Bond type takes priority
+                        }
+
+                        const params = new URLSearchParams({
+                            page: this.currentPage,
+                            size: this.pageSize,
+                            ...(this.sortBy && { sortBy: this.sortBy, sortDir: this.sortDir }),
+                            ...(searchTerm && { search: searchTerm }),
+                            ...(this.filters.minPrice && { minPrice: this.filters.minPrice }),
+                            ...(this.filters.maxPrice && { maxPrice: this.filters.maxPrice }),
+                            ...(this.filters.minYield && { minYield: this.filters.minYield }),
+                            ...(this.filters.maxYield && { maxYield: this.filters.maxYield })
+                        });
+
+                        const response = await fetch(`http://localhost:5130/api/bonds?${params}`);
+                        const data = await response.json();
+                        
+                        this.bonds = data.data || [];
+                        this.filteredCount = data.totalCount || 0;
+                        this.totalPages = data.totalPages || 1;
+                        
+                        // Store current prices for change tracking
+                        this.bonds.forEach(bond => {
+                            if (!(bond.Bond.Id in this.previousPrices)) {
+                                this.previousPrices[bond.Bond.Id] = bond.Bond.Price;
+                            }
+                        });
+                        
+                    } catch (error) {
+                        console.error('Failed to load bonds:', error);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                connectWebSocket() {
+                    console.log('Attempting to connect to WebSocket...');
+                    const ws = new WebSocket('ws://localhost:5130/ws');
+                    
+                    ws.onopen = () => {
+                        this.connected = true;
+                        console.log('✅ Connected to bond stream');
+                    };
+                    
+                    ws.onmessage = (event) => {
+                        const lines = event.data.trim().split('\n');
+                        console.log(`📨 Got batch ${lines.length} updates...`);
+                        
+                        let successCount = 0;
+                        for (const line of lines) {
+                            try {
+                                const bondUpdate = JSON.parse(line);
+                                this.updateBond(bondUpdate);
+                                this.updateCount++;
+                                successCount++;
+                            } catch (e) {
+                                console.warn('❌ Failed to parse line:', line.substring(0, 100) + '...');
+                            }
+                        }
+                        console.log(`✅ Successfully processed ${successCount}/${lines.length} updates`);
+                    };
+                    
+                    ws.onerror = (error) => {
+                        console.error('❌ WebSocket error:', error);
+                    };
+                    
+                    ws.onclose = (event) => {
+                        this.connected = false;
+                        console.log(`❌ Disconnected from bond stream. Code: ${event.code}, Reason: ${event.reason}`);
+                        // Auto-reconnect after 3 seconds
+                        setTimeout(() => this.connectWebSocket(), 3000);
+                    };
+                },
+
+                updateBond(bondUpdate) {
+                    // Find bond in current page and update it
+                    const index = this.bonds.findIndex(b => b.Bond.Id === bondUpdate.Bond.Id);
+                    const bondId = bondUpdate.Bond.Id;
+                    
+                    // Simple update tracking
+                    this.updateCounts[bondId] = (this.updateCounts[bondId] || 0) + 1;
+                    
+                    if (index !== -1) {
+                        // Store previous price before updating
+                        this.previousPrices[bondId] = this.bonds[index].Bond.Price;
+                        
+                        // Mark as recently updated with simple count
+                        bondUpdate._recentlyUpdated = true;
+                        bondUpdate._updateCount = this.updateCounts[bondId];
+                        
+                        this.bonds[index] = bondUpdate;
+                        
+                        // Remove the update indicator after 2 seconds
+                        setTimeout(() => {
+                            if (this.bonds[index] && this.bonds[index].Bond.Id === bondId) {
+                                this.bonds[index]._recentlyUpdated = false;
+                            }
+                        }, 2000);
+                    }
+                },
+
+                // Simple update count display
+                getUpdateFrequencyText(bond) {
+                    const count = bond._updateCount || 0;
+                    if (count === 0) return '';
+                    if (count === 1) return '1 update';
+                    return `${count} updates`;
+                },
+
+                // Simple filtering
+                applyFilters() {
+                    this.currentPage = 1;
+                    this.loadBonds();
+                },
+
+                clearFilters() {
+                    this.filters = {
+                        search: '',
+                        bondType: '',
+                        minPrice: '',
+                        maxPrice: '',
+                        minYield: '',
+                        maxYield: ''
+                    };
+                    this.currentPage = 1;
+                    this.loadBonds();
+                },
+
+                sort(column) {
+                    if (column === 'priceChange') {
+                        // Handle client-side price change sorting
+                        this.sortClientSide(column);
+                    } else {
+                        // Handle server-side sorting for other columns
+                        if (this.sortBy === column) {
+                            this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
+                        } else {
+                            this.sortBy = column;
+                            this.sortDir = 'asc';
+                        }
+                        this.currentPage = 1;
+                        this.loadBonds();
+                    }
+                },
+
+                sortClientSide(column) {
+                    if (this.sortBy === column) {
+                        this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        this.sortBy = column;
+                        this.sortDir = 'asc';
+                    }
+                    
+                    // Sort current bonds array by price change
+                    this.bonds.sort((a, b) => {
+                        const changeA = this.getPriceChange(a);
+                        const changeB = this.getPriceChange(b);
+                        
+                        if (this.sortDir === 'asc') {
+                            return changeA - changeB;
+                        } else {
+                            return changeB - changeA;
+                        }
+                    });
+                },
+
+                getSortClass(column) {
+                    if (this.sortBy !== column) return 'sortable';
+                    return this.sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc';
+                },
+
+                // Pagination
+                nextPage() {
+                    if (this.currentPage < this.totalPages) {
+                        this.currentPage++;
+                        this.loadBonds();
+                    }
+                },
+
+                prevPage() {
+                    if (this.currentPage > 1) {
+                        this.currentPage--;
+                        this.loadBonds();
+                    }
+                },
+
+                // Price change calculation
+                getPriceChangeClass(bond) {
+                    const change = this.getPriceChange(bond);
+                    if (change > 0) return 'price-positive';
+                    if (change < 0) return 'price-negative';
+                    return '';
+                },
+
+                getPriceChangeText(bond) {
+                    const change = this.getPriceChange(bond);
+                    if (change === 0) return '—';
+                    const sign = change > 0 ? '+' : '';
+                    return `${sign}${change.toFixed(2)}`;
+                },
+
+                getPriceChange(bond) {
+                    const previous = this.previousPrices[bond.Bond.Id] || bond.Bond.Price;
+                    return bond.Bond.Price - previous;
+                }
+            }
+        }
+    </script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        body { 
+            font-family: system-ui, -apple-system, sans-serif; 
+            padding: 1rem; 
+            background: #f8fafc;
+            margin: 0;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .header { 
+            background: white; 
+            padding: 2rem; 
+            border-radius: 8px; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 1.5rem;
+        }
+        .stats-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+            gap: 1rem; 
+            margin-top: 1rem;
+        }
+        .stat-card { 
+            background: #f1f5f9; 
+            padding: 1rem; 
+            border-radius: 6px; 
+            border-left: 4px solid #3b82f6;
+        }
+        .stat-value { font-size: 1.5rem; font-weight: bold; color: #1e293b; }
+        .stat-label { font-size: 0.875rem; color: #64748b; margin-top: 0.25rem; }
+        .controls { 
+            background: white; 
+            padding: 1.5rem; 
+            border-radius: 8px; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 1.5rem;
+        }
+        .filter-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+            gap: 1rem; 
+            margin-top: 1rem;
+        }
+        .form-group { display: flex; flex-direction: column; }
+        .form-label { font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem; }
+        .form-input { 
+            padding: 0.5rem; 
+            border: 1px solid #d1d5db; 
+            border-radius: 4px; 
+            font-size: 0.875rem;
+        }
+        .form-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
+        .btn { 
+            padding: 0.5rem 1rem; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-secondary { background: #6b7280; color: white; }
+        .btn-secondary:hover { background: #4b5563; }
+        .bond-table { 
+            background: white; 
+            border-radius: 8px; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .table-header { 
+            background: #f8fafc; 
+            padding: 1rem; 
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .table-container { max-height: 600px; overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { 
+            padding: 0.75rem; 
+            text-align: left; 
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 0.875rem;
+        }
+        th { 
+            background: #f8fafc; 
+            font-weight: 600; 
+            color: #374151;
+            cursor: pointer;
+            user-select: none;
+        }
+        th:hover { background: #f1f5f9; }
+        .sortable::after { content: ' ↕'; color: #9ca3af; }
+        .sorted-asc::after { content: ' ↑'; color: #3b82f6; }
+        .sorted-desc::after { content: ' ↓'; color: #3b82f6; }
+        .price-positive { color: #059669; }
+        .price-negative { color: #dc2626; }
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+        }
+        .status-connected { background: #10b981; }
+        .status-disconnected { background: #ef4444; }
+        .recently-updated { 
+            background-color: #fef3c7 !important; 
+            transition: background-color 2s ease-out;
+        }
+        .pagination { 
+            padding: 1rem; 
+            display: flex; 
+            justify-content: between; 
+            align-items: center;
+            border-top: 1px solid #e2e8f0;
+        }
+        .loading { color: #6b7280; font-style: italic; }
+    </style>
+</head>
+<body x-data="bondDashboard()">
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h1 style="margin: 0; color: #1e293b;">Bond Trading Platform</h1>
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <div style="display: flex; align-items: center;">
+                        <span class="status-indicator" :class="connected ? 'status-connected' : 'status-disconnected'"></span>
+                        <span x-text="connected ? 'Connected' : 'Disconnected'" style="font-size: 0.875rem; color: #64748b;"></span>
+                    </div>
+                    <div style="font-size: 0.875rem; color: #64748b;">
+                        Updates: <span x-text="updateCount.toLocaleString()"></span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" x-text="summary.totalBonds?.toLocaleString() || '0'"></div>
+                    <div class="stat-label">Total Bonds</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" x-text="'$' + (summary.averagePrice?.toFixed(2) || '0')"></div>
+                    <div class="stat-label">Average Price</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" x-text="((summary.averageYield || 0) * 100).toFixed(3) + '%'"></div>
+                    <div class="stat-label">Average Yield</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" x-text="filteredCount.toLocaleString()"></div>
+                    <div class="stat-label">Filtered Results</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h2 style="margin: 0; font-size: 1.125rem;">Filters & Search</h2>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn btn-primary" @click="applyFilters">Apply Filters</button>
+                    <button class="btn btn-secondary" @click="clearFilters">Clear</button>
+                </div>
+            </div>
+            
+            <div class="filter-grid">
+                <div class="form-group">
+                    <label class="form-label">Search Bond ID</label>
+                    <input class="form-input" type="text" x-model="filters.search" placeholder="e.g., AAPL, UST, CORP_BB">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Bond Type</label>
+                    <select class="form-input" x-model="filters.bondType">
+                        <option value="">All Types</option>
+                        <option value="UST-">US Treasury (Low Vol)</option>
+                        <option value="AAA-">AAA Corporate (Low Vol)</option>
+                        <option value="AA-">AA Corporate (Low Vol)</option>
+                        <option value="A-">A Corporate (Medium Vol)</option>
+                        <option value="BBB-">BBB Corporate (High Vol)</option>
+                        <option value="BB-">BB Junk Bonds (Very High Vol)</option>
+                        <option value="AAPL-">Apple Bonds</option>
+                        <option value="MSFT-">Microsoft Bonds</option>
+                        <option value="GOOGL-">Google Bonds</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Min Price</label>
+                    <input class="form-input" type="number" x-model="filters.minPrice" placeholder="e.g., 900">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Max Price</label>
+                    <input class="form-input" type="number" x-model="filters.maxPrice" placeholder="e.g., 1100">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Min Yield %</label>
+                    <input class="form-input" type="number" step="0.001" x-model="filters.minYield" placeholder="e.g., 0.05">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Max Yield %</label>
+                    <input class="form-input" type="number" step="0.001" x-model="filters.maxYield" placeholder="e.g., 0.15">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Page Size</label>
+                    <select class="form-input" x-model="pageSize" @change="loadBonds()">
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                        <option value="200">200</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bond Table -->
+        <div class="bond-table">
+            <div class="table-header">
+                <h3 style="margin: 0;">Bond Portfolio</h3>
+                <div x-show="loading" class="loading">Loading...</div>
+            </div>
+            
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th class="sortable" @click="sort('id')" :class="getSortClass('id')">Bond ID</th>
+                            <th class="sortable" @click="sort('price')" :class="getSortClass('price')">Price</th>
+                            <th class="sortable" @click="sort('yield')" :class="getSortClass('yield')">Current Yield</th>
+                            <th class="sortable" @click="sort('ytm')" :class="getSortClass('ytm')">YTM</th>
+                            <th class="sortable" @click="sort('duration')" :class="getSortClass('duration')">Mod Duration</th>
+                            <th class="sortable" @click="sort('coupon')" :class="getSortClass('coupon')">Coupon</th>
+                            <th class="sortable" @click="sort('priceChange')" :class="getSortClass('priceChange')">Price Change</th>
+                            <th>Activity</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="bond in bonds" :key="bond.Bond.Id">
+                            <tr :class="bond._recentlyUpdated ? 'recently-updated' : ''">
+                                <td x-text="bond.Bond.Id" style="font-family: monospace; font-weight: 500;"></td>
+                                <td x-text="'$' + bond.Bond.Price.toLocaleString()"></td>
+                                <td x-text="(bond.Yield * 100).toFixed(3) + '%'"></td>
+                                <td x-text="bond.YieldToMaturity ? (bond.YieldToMaturity * 100).toFixed(3) + '%' : 'N/A'"></td>
+                                <td x-text="bond.ModifiedDuration ? bond.ModifiedDuration.toFixed(2) : 'N/A'"></td>
+                                <td x-text="bond.Bond.Coupon + '%'"></td>
+                                <td>
+                                    <span :class="getPriceChangeClass(bond)" x-text="getPriceChangeText(bond)"></span>
+                                </td>
+                                <td style="font-size: 0.75rem; color: #6b7280;">
+                                    <span x-text="getUpdateFrequencyText(bond)"></span>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="pagination" x-show="totalPages > 1">
+                <div style="font-size: 0.875rem; color: #64748b;">
+                    Showing <span x-text="((currentPage - 1) * pageSize) + 1"></span> to 
+                    <span x-text="Math.min(currentPage * pageSize, filteredCount)"></span> of 
+                    <span x-text="filteredCount.toLocaleString()"></span> results
+                </div>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button class="btn btn-secondary" @click="prevPage()" :disabled="currentPage === 1">← Prev</button>
+                    <span style="font-size: 0.875rem; padding: 0 1rem;">
+                        Page <span x-text="currentPage"></span> of <span x-text="totalPages"></span>
+                    </span>
+                    <button class="btn btn-secondary" @click="nextPage()" :disabled="currentPage === totalPages">Next →</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+</body>
+</html>
