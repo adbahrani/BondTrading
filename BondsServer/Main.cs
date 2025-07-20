@@ -10,7 +10,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 var connectedClients = new HashSet<WebSocket>();
 
 /*
- * Init workers
+ * Init workers 
  */
 var ingestedQueue = new BlockingCollection<Bond>();
 var statsCalculatedQueue = new BlockingCollection<BondWithStatistics>();
@@ -22,7 +22,7 @@ Task.Run(statCalculationWorker.Run);
 var cacheUpdateWorker = new CacheUpdateWorker(statsCalculatedQueue, updatedQueue);
 Task.Run(cacheUpdateWorker.Run);
 
-var batchNotificationWorker = new BatchNotificationWorker(updatedQueue, 1000, (message) => // Changed to 2000
+var batchNotificationWorker = new BatchNotificationWorker(updatedQueue, 2000, (message) =>
 {
     var content = new ArraySegment<byte>(Encoding.UTF8.GetBytes(message));
 
@@ -45,8 +45,8 @@ Task.Run(dummyInventoryProvider.Run);
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services
-builder.Services.AddControllers(); 
-builder.Services.AddSingleton(cacheUpdateWorker); // Register for DI
+builder.Services.AddControllers();
+builder.Services.AddSingleton(cacheUpdateWorker);
 
 // Add CORS services
 builder.Services.AddCors(options =>
@@ -61,13 +61,17 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// ✅ IMPORTANT: Order matters - DefaultFiles BEFORE StaticFiles
+app.UseDefaultFiles();       // Serve index.html by default  
+app.UseStaticFiles();        // Enable static file serving
+
 // Enable CORS middleware
 app.UseCors();
 
 app.UseWebSockets();
 
 // Add controller routing
-app.MapControllers(); // Add this for API endpoints
+app.MapControllers();
 
 app.MapGet("/status", async (context) =>
 {
@@ -116,5 +120,12 @@ app.Map("/ws", async context =>
         }
     }
 });
+
+app.MapGet("/", context =>
+{
+    context.Response.Redirect("/index.html");
+    return Task.CompletedTask;
+});
+
 
 app.Run();
