@@ -22,7 +22,7 @@ Task.Run(statCalculationWorker.Run);
 var cacheUpdateWorker = new CacheUpdateWorker(statsCalculatedQueue, updatedQueue);
 Task.Run(cacheUpdateWorker.Run);
 
-var batchNotificationWorker = new BatchNotificationWorker(updatedQueue, 1000, (message) =>
+var batchNotificationWorker = new BatchNotificationWorker(updatedQueue, 1000, (message) => // Changed to 2000
 {
     var content = new ArraySegment<byte>(Encoding.UTF8.GetBytes(message));
 
@@ -39,18 +39,39 @@ Task.Run(batchNotificationWorker.Run);
 var dummyInventoryProvider = new DummyInventoryProvider(500_000, ingestedQueue);
 Task.Run(dummyInventoryProvider.Run);
 
-
 /*
  * Init server
  */
 var builder = WebApplication.CreateBuilder(args);
+
+// Add services
+builder.Services.AddControllers(); 
+builder.Services.AddSingleton(cacheUpdateWorker); // Register for DI
+
+// Add CORS services
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
+
 var app = builder.Build();
+
+// Enable CORS middleware
+app.UseCors();
 
 app.UseWebSockets();
 
+// Add controller routing
+app.MapControllers(); // Add this for API endpoints
+
 app.MapGet("/status", async (context) =>
 {
-    context.Response.ContentType = "text/plain"; // or application/json lines if applicable
+    context.Response.ContentType = "text/plain";
 
     var latestStatuses = cacheUpdateWorker.GetLatestStatuses();
     for (int i = 0; i < latestStatuses.Length; i++)
