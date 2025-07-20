@@ -23,11 +23,10 @@ namespace BondsServer
         {
             Dictionary<string, int> bondIndicesById = new();
 
-            foreach (BondWithStatistics bondWithStats in inputQueue.GetConsumingEnumerable())
+            foreach (BondWithStatistics bond in inputQueue.GetConsumingEnumerable())
             {
-                string bondId = bondWithStats.Bond.id;
                 int index;
-                bool alreadyExists = bondIndicesById.TryGetValue(bondId, out index);
+                bool alreadyExists = bondIndicesById.TryGetValue(bond.id, out index);
 
                 if (!alreadyExists)
                 {
@@ -35,11 +34,11 @@ namespace BondsServer
                     if (numBonds == MAX_BONDS) throw new Exception("Maximum number of bonds exceeded");
 
                     index = numBonds;
-                    bondIndicesById[bondId] = index;
+                    bondIndicesById[bond.id] = index;
                 }
 
                 // Convert the bond's current status to JSON
-                string serializedStatus = JsonSerializer.Serialize(bondWithStats);
+                string serializedStatus = JsonSerializer.Serialize(bond);
                 latestStatuses[index] = serializedStatus;
 
                 if (!alreadyExists)
@@ -52,7 +51,7 @@ namespace BondsServer
 
                 outputQueue.Add(new()
                 {
-                    bondId = bondId,
+                    bondId = bond.id,
                     serializedStatus = serializedStatus,
                 });
             }
