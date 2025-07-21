@@ -21,7 +21,7 @@ namespace BondsServer
 
         public void Run()
         {
-            Console.WriteLine("🚀 BatchNotificationWorker started");
+            Console.WriteLine(" BatchNotificationWorker started");
             StringBuilder sb = new StringBuilder();
             List<string> currentBatch = new List<string>(batchSize);
             Dictionary<string, int> bondIndicesById = new();

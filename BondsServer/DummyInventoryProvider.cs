@@ -34,10 +34,10 @@ namespace BondsServer
             int totalUpdates = 0;
             long startTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-            // Update loop - steady 1k/sec rate
+            // Update loop - target 2100/sec with predictable 50ms sleep
             while (true)
             {
-                for (int i = 0; i < 10; ++i) // 10 updates per cycle
+                for (int i = 0; i < 530; ++i) // 420 updates per 200ms => max 2100/sec
                 {
                     int idx;
 
@@ -74,7 +74,7 @@ namespace BondsServer
                         Console.WriteLine($"Update rate: {rate:F1}/sec");
                     }
                 }
-                Thread.Sleep(5); // 10 updates every 5ms = 2,000/sec
+                Thread.Sleep(250); // send every 200ms
             }
         }
 

@@ -15,7 +15,7 @@ namespace BondsServer
 
         public void Run()
         {
-            Console.WriteLine("🚀 CacheUpdateWorker started");
+            Console.WriteLine(" CacheUpdateWorker started");
             Dictionary<string, int> bondIndicesById = new();
             int totalProcessed = 0;
 
