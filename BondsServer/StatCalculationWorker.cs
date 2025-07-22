@@ -22,7 +22,7 @@ namespace BondsServer
             }
         }
 
-        private BondWithStatistics CalculateStats(Bond bond)
+        public static BondWithStatistics CalculateStats(Bond bond)
         {
             // Fast, simple calculations with minimal decimal precision
             var currentYield = (float)Math.Round((double)bond.coupon / bond.price, 3);

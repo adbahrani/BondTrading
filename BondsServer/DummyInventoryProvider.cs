@@ -4,33 +4,17 @@ namespace BondsServer
 {
     public class DummyInventoryProvider
     {
-        int numBonds;
+        List<Bond> bonds;
         BlockingCollection<Bond> outputQueue;
 
-        public DummyInventoryProvider(int numBonds, BlockingCollection<Bond> outputQueue)
+        public DummyInventoryProvider(List<Bond> bonds, BlockingCollection<Bond> outputQueue)
         {
-            this.numBonds = numBonds;
+            this.bonds = bonds;
             this.outputQueue = outputQueue;
         }
 
         public void Run()
         {
-            // Generate simple bonds
-            List<Bond> bonds = GenerateBonds();
-
-            // Output initial bond prices
-            foreach (Bond bond in bonds)
-            {
-                outputQueue.Add(bond);
-            }
-
-            Console.WriteLine($"Generated {bonds.Count} bonds");
-            Console.WriteLine($"BB Junk Bonds: {bonds.Count(b => b.id.StartsWith("BB-"))}");
-
-            // IMPORTANT: Let the system stabilize before starting updates
-            Console.WriteLine("Waiting 3 seconds for system to stabilize...");
-            Thread.Sleep(3000);
-
             int totalUpdates = 0;
             long startTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -47,7 +31,7 @@ namespace BondsServer
                         // Try to find a BB bond
                         for (int attempt = 0; attempt < 10; attempt++)
                         {
-                            int testIdx = Random.Shared.Next() % numBonds;
+                            int testIdx = Random.Shared.Next() % bonds.Count;
                             if (bonds[testIdx].id.StartsWith("BB-"))
                             {
                                 idx = testIdx;
@@ -57,11 +41,13 @@ namespace BondsServer
                     }
 
                     // Default: random selection
-                    idx = Random.Shared.Next() % numBonds;
+                    idx = Random.Shared.Next() % bonds.Count;
 
-                    UpdateBond:
+                UpdateBond:
                     // Simple price change based on bond type
                     var priceChange = GetPriceChange(bonds[idx]);
+                    if (priceChange == 0) continue;
+
                     bonds[idx].price += priceChange;
                     bonds[idx].price = Math.Max(500, Math.Min(1500, bonds[idx].price));
 
@@ -78,7 +64,7 @@ namespace BondsServer
             }
         }
 
-        private List<Bond> GenerateBonds()
+        public static List<Bond> GenerateBonds(int numBonds)
         {
             var bonds = new List<Bond>(numBonds);
             var random = new Random();
@@ -143,6 +129,9 @@ namespace BondsServer
                     price = price
                 });
             }
+
+            Console.WriteLine($"Generated {bonds.Count} bonds");
+            Console.WriteLine($"BB Junk Bonds: {bonds.Count(b => b.id.StartsWith("BB-"))}");
 
             return bonds;
         }

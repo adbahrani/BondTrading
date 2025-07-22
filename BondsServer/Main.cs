@@ -17,16 +17,14 @@ var statsCalculatedQueue = new BlockingCollection<BondWithStatistics>();
 var updatedQueue = new BlockingCollection<BondUpdate>();
 
 var statCalculationWorker = new StatCalculationWorker(ingestedQueue, statsCalculatedQueue);
-Task.Run(statCalculationWorker.Run);
 
 var cacheUpdateWorker = new CacheUpdateWorker(statsCalculatedQueue, updatedQueue);
-Task.Run(cacheUpdateWorker.Run);
 
 // set to 500 to reduce browser load
 // Move batchCount outside the lambda
 int batchCount = 0;
 
-var batchNotificationWorker = new BatchNotificationWorker(updatedQueue, 100, (message) =>
+var batchNotificationWorker = new BatchNotificationWorker(updatedQueue, 200, (message) =>
 {
     var content = new ArraySegment<byte>(Encoding.UTF8.GetBytes(message));
     
@@ -91,9 +89,18 @@ var batchNotificationWorker = new BatchNotificationWorker(updatedQueue, 100, (me
         }
     }
 });
-Task.Run(batchNotificationWorker.Run);
 
-var dummyInventoryProvider = new DummyInventoryProvider(500_000, ingestedQueue);
+// Pre-seed cache with intial state
+var initialBonds = DummyInventoryProvider.GenerateBonds(500_000);
+var initialBondsWithStats = initialBonds.Select(b => StatCalculationWorker.CalculateStats(b)).ToList();
+cacheUpdateWorker.Initialize(initialBondsWithStats);
+
+// Start workers
+var dummyInventoryProvider = new DummyInventoryProvider(initialBonds, ingestedQueue);
+
+Task.Run(batchNotificationWorker.Run);
+Task.Run(cacheUpdateWorker.Run);
+Task.Run(statCalculationWorker.Run);
 Task.Run(dummyInventoryProvider.Run);
 
 /*
@@ -135,7 +142,7 @@ app.MapGet("/status", async (context) =>
     var latestStatuses = cacheUpdateWorker.GetLatestStatuses();
     for (int i = 0; i < latestStatuses.Length; i++)
     {
-        await context.Response.WriteAsync(latestStatuses.Span[i]);
+        await context.Response.WriteAsync(latestStatuses.Span[i].Item1);
         await context.Response.WriteAsync("\n");
     }
     await context.Response.Body.FlushAsync();

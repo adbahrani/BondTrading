@@ -1,4 +1,6 @@
-﻿using System.Collections.Concurrent;
+﻿using System;
+using System.Collections.Concurrent;
+using System.Reflection;
 using System.Text.Json;
 
 namespace BondsServer
@@ -9,14 +11,28 @@ namespace BondsServer
     {
         private const int MAX_BONDS = 500_000;
 
-        string[] latestStatuses = new string[MAX_BONDS];
+        (string, BondWithStatistics)[] latestStatuses = new (string, BondWithStatistics)[MAX_BONDS];
         int numBonds = 0;
         private readonly object lockObject = new object(); // Better lock object
+        private Dictionary<string, int> bondIndicesById = new();
+
+        public void Initialize(List<BondWithStatistics> bonds)
+        {
+            foreach (BondWithStatistics bondWithStats in bonds)
+            {
+                string bondId = bondWithStats.Bond.id;
+                bondIndicesById[bondId] = numBonds;
+
+                string serializedStatus = JsonSerializer.Serialize(bondWithStats);
+                latestStatuses[numBonds] = (serializedStatus, bondWithStats);
+
+                numBonds++;
+            }
+        }
 
         public void Run()
         {
             Console.WriteLine(" CacheUpdateWorker started");
-            Dictionary<string, int> bondIndicesById = new();
             int totalProcessed = 0;
 
             foreach (BondWithStatistics bondWithStats in inputQueue.GetConsumingEnumerable())
@@ -42,7 +58,7 @@ namespace BondsServer
 
                     // Convert the bond's current status to JSON and store it
                     string serializedStatus = JsonSerializer.Serialize(bondWithStats);
-                    latestStatuses[index] = serializedStatus;
+                    latestStatuses[index] = (serializedStatus, bondWithStats);
 
                     // Send to output queue
                     outputQueue.Add(new()
@@ -62,7 +78,7 @@ namespace BondsServer
             Console.WriteLine("⚠️ CacheUpdateWorker ended - inputQueue completed");
         }
 
-        public Memory<string> GetLatestStatuses()
+        public Memory<(string,BondWithStatistics)> GetLatestStatuses()
         {
             lock (lockObject)
             {

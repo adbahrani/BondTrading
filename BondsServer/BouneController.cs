@@ -30,43 +30,26 @@ namespace BondsServer
             {
                 // Get all bonds from cache
                 var allBondsData = _cacheWorker.GetLatestStatuses();
-                var allBonds = new List<BondWithStatistics>();
 
-                // Parse JSON data
+                List<BondWithStatistics> filteredBonds = new(allBondsData.Length);
                 for (int i = 0; i < allBondsData.Length; i++)
                 {
-                    try
+                    BondWithStatistics bond = allBondsData.Span[i].Item2;
+
+                    if (!string.IsNullOrEmpty(search))
                     {
-                        var bond = JsonSerializer.Deserialize<BondWithStatistics>(allBondsData.Span[i]);
-                        if (bond != null)
-                            allBonds.Add(bond);
+                        if (!bond.Bond.id.Contains(search, StringComparison.OrdinalIgnoreCase)) continue;
                     }
-                    catch
-                    {
-                        // Skip invalid entries
-                    }
+
+                    if (minPrice.HasValue && bond.Bond.price < minPrice.Value) continue;
+                    if (maxPrice.HasValue && bond.Bond.price > maxPrice.Value) continue;
+                    if (minYield.HasValue && bond.Yield < (float)minYield.Value) continue;
+                    if (maxYield.HasValue && bond.Yield > (float)maxYield.Value) continue;
+
+                    filteredBonds.Add(bond);
                 }
 
-                // Apply filters
-                var filteredBonds = allBonds.AsQueryable();
-
-                if (!string.IsNullOrEmpty(search))
-                {
-                    filteredBonds = filteredBonds.Where(b => 
-                        b.Bond.id.Contains(search, StringComparison.OrdinalIgnoreCase));
-                }
-
-                if (minPrice.HasValue)
-                    filteredBonds = filteredBonds.Where(b => b.Bond.price >= minPrice.Value);
-
-                if (maxPrice.HasValue)
-                    filteredBonds = filteredBonds.Where(b => b.Bond.price <= maxPrice.Value);
-
-                if (minYield.HasValue)
-                    filteredBonds = filteredBonds.Where(b => b.Yield >= (float)minYield.Value);
-
-                if (maxYield.HasValue)
-                    filteredBonds = filteredBonds.Where(b => b.Yield <= (float)maxYield.Value);
+                var sortedBonds = filteredBonds.AsQueryable();
 
                 // Apply sorting
                 if (!string.IsNullOrEmpty(sortBy))
@@ -74,35 +57,35 @@ namespace BondsServer
                     switch (sortBy.ToLower())
                     {
                         case "id":
-                            filteredBonds = sortDir == "desc" 
-                                ? filteredBonds.OrderByDescending(b => b.Bond.id)
-                                : filteredBonds.OrderBy(b => b.Bond.id);
+                            sortedBonds = sortDir == "desc" 
+                                ? sortedBonds.OrderByDescending(b => b.Bond.id)
+                                : sortedBonds.OrderBy(b => b.Bond.id);
                             break;
                         case "price":
-                            filteredBonds = sortDir == "desc"
-                                ? filteredBonds.OrderByDescending(b => b.Bond.price)
-                                : filteredBonds.OrderBy(b => b.Bond.price);
+                            sortedBonds = sortDir == "desc"
+                                ? sortedBonds.OrderByDescending(b => b.Bond.price)
+                                : sortedBonds.OrderBy(b => b.Bond.price);
                             break;
                         case "yield":
-                            filteredBonds = sortDir == "desc"
-                                ? filteredBonds.OrderByDescending(b => b.Yield)
-                                : filteredBonds.OrderBy(b => b.Yield);
+                            sortedBonds = sortDir == "desc"
+                                ? sortedBonds.OrderByDescending(b => b.Yield)
+                                : sortedBonds.OrderBy(b => b.Yield);
                             break;
                         case "coupon":
-                            filteredBonds = sortDir == "desc"
-                                ? filteredBonds.OrderByDescending(b => b.Bond.coupon)
-                                : filteredBonds.OrderBy(b => b.Bond.coupon);
+                            sortedBonds = sortDir == "desc"
+                                ? sortedBonds.OrderByDescending(b => b.Bond.coupon)
+                                : sortedBonds.OrderBy(b => b.Bond.coupon);
                             break;
                         default:
-                            filteredBonds = filteredBonds.OrderBy(b => b.Bond.id);
+                            sortedBonds = sortedBonds.OrderBy(b => b.Bond.id);
                             break;
                     }
                 }
 
-                var totalCount = filteredBonds.Count();
+                var totalCount = sortedBonds.Count();
 
                 // Apply pagination
-                var pagedBonds = filteredBonds
+                var pagedBonds = sortedBonds
                     .Skip((page - 1) * size)
                     .Take(size)
                     .ToList();
@@ -136,13 +119,7 @@ namespace BondsServer
 
                 for (int i = 0; i < allBondsData.Length; i++)
                 {
-                    try
-                    {
-                        var bond = JsonSerializer.Deserialize<BondWithStatistics>(allBondsData.Span[i]);
-                        if (bond != null)
-                            allBonds.Add(bond);
-                    }
-                    catch { }
+                    allBonds.Add(allBondsData.Span[i].Item2);
                 }
 
                 if (!allBonds.Any())
