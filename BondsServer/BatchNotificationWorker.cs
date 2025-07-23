@@ -49,7 +49,7 @@ namespace BondsServer
                 // Debug: Log every 5000 updates received (instead of 1000)
                 if (numUpdatesProcessed % 5000 == 0)
                 {
-                    Console.WriteLine($"📥 BatchWorker received {numUpdatesProcessed} updates, current batch size: {currentBatch.Count}");
+                    Console.WriteLine($"BatchWorker received {numUpdatesProcessed} updates, current batch size: {currentBatch.Count}");
                 }
 
                 if (numUpdatesProcessed == batchSize)
@@ -67,7 +67,7 @@ namespace BondsServer
                     // Only log every 100th batch (instead of every batch)
                     if (totalBatchesSent % 100 == 0)
                     {
-                        Console.WriteLine($"📤 Sent 100 batches (last: #{totalBatchesSent} with {currentBatch.Count} bonds, {message.Length} bytes)");
+                        Console.WriteLine($"Sent 100 batches (last: #{totalBatchesSent} with {currentBatch.Count} bonds, {message.Length} bytes)");
                     }
 
                     // Send the message - with error handling
@@ -78,7 +78,7 @@ namespace BondsServer
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"❌ Error broadcasting batch #{totalBatchesSent}: {ex.Message}");
+                        Console.WriteLine($"Error broadcasting batch #{totalBatchesSent}: {ex.Message}");
                         // Continue processing even if broadcast fails
                     }
 
@@ -90,7 +90,7 @@ namespace BondsServer
                 }
             }
             
-            Console.WriteLine("⚠️ BatchNotificationWorker ended - inputQueue completed");
+            Console.WriteLine("BatchNotificationWorker ended - inputQueue completed");
         }
     }
 }

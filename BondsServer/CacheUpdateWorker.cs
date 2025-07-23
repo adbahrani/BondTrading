@@ -32,7 +32,7 @@ namespace BondsServer
 
         public void Run()
         {
-            Console.WriteLine(" CacheUpdateWorker started");
+            Console.WriteLine("CacheUpdateWorker started");
             int totalProcessed = 0;
 
             foreach (BondWithStatistics bondWithStats in inputQueue.GetConsumingEnumerable())
@@ -70,12 +70,12 @@ namespace BondsServer
                     totalProcessed++;
                     if (totalProcessed % 10000 == 0) // Reduced from 5000 to 10000
                     {
-                        Console.WriteLine($"💾 CacheWorker processed {totalProcessed} updates, total bonds: {numBonds}");
+                        Console.WriteLine($"CacheWorker processed {totalProcessed} updates, total bonds: {numBonds}");
                     }
                 }
             }
             
-            Console.WriteLine("⚠️ CacheUpdateWorker ended - inputQueue completed");
+            Console.WriteLine("CacheUpdateWorker ended - inputQueue completed");
         }
 
         public Memory<(string,BondWithStatistics)> GetLatestStatuses()

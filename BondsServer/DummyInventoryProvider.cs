@@ -18,7 +18,6 @@ namespace BondsServer
             int totalUpdates = 0;
             long startTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-            // Update loop - target 2100/sec with predictable 50ms sleep
             while (true)
             {
                 for (int i = 0; i < 550; ++i) // 550 updates per 250ms => max 2200/sec

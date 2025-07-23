@@ -9,9 +9,6 @@ using Microsoft.AspNetCore.Http.HttpResults;
 
 var connectedClients = new HashSet<WebSocket>();
 
-/*
- * Init workers 
- */
 var ingestedQueue = new BlockingCollection<Bond>();
 var statsCalculatedQueue = new BlockingCollection<BondWithStatistics>();
 var updatedQueue = new BlockingCollection<BondUpdate>();
@@ -20,8 +17,6 @@ var statCalculationWorker = new StatCalculationWorker(ingestedQueue, statsCalcul
 
 var cacheUpdateWorker = new CacheUpdateWorker(statsCalculatedQueue, updatedQueue);
 
-// set to 500 to reduce browser load
-// Move batchCount outside the lambda
 int batchCount = 0;
 
 var batchNotificationWorker = new BatchNotificationWorker(updatedQueue, 200, (message) =>
@@ -50,7 +45,6 @@ var batchNotificationWorker = new BatchNotificationWorker(updatedQueue, 200, (me
                     continue;
                 }
                 
-                // Fire and forget - don't wait or check status
                 _ = Task.Run(async () =>
                 {
                     try
@@ -103,9 +97,7 @@ Task.Run(cacheUpdateWorker.Run);
 Task.Run(statCalculationWorker.Run);
 Task.Run(dummyInventoryProvider.Run);
 
-/*
- * Init server
- */
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services
