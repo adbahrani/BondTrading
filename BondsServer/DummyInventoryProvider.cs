@@ -21,7 +21,7 @@ namespace BondsServer
             // Update loop - target 2100/sec with predictable 50ms sleep
             while (true)
             {
-                for (int i = 0; i < 530; ++i) // 420 updates per 200ms => max 2100/sec
+                for (int i = 0; i < 550; ++i) // 550 updates per 250ms => max 2200/sec
                 {
                     int idx;
 
@@ -60,7 +60,7 @@ namespace BondsServer
                         Console.WriteLine($"Update rate: {rate:F1}/sec");
                     }
                 }
-                Thread.Sleep(250); // send every 200ms
+                Thread.Sleep(250); // send every 250ms
             }
         }
 
